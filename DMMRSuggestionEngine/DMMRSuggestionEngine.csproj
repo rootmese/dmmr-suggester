@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- ========== Configurações do NuGet ========== -->
+    <PackageId>DMMRSuggestionEngine</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Alessandro Silveira</Authors>
+    <Product>DMMR Suggestion Engine</Product>
+    <Description>Engine de sugestão com busca fuzzy local e busca híbrida (OpenSearch).</Description>
+    <PackageTags>suggestion;fuzzy;levenshtein;opensearch;search</PackageTags>
+    <RepositoryUrl>https://github.com/rootmese/dmmr-suggester</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <!-- Gera o pacote no build / dotnet pack -->
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenSearch.Client" Version="1.8.0" />
+  </ItemGroup>
+
+</Project>
