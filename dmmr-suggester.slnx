@@ -1,3 +1,5 @@
 <Solution>
+  <Project Path="DMMRSuggestionEngine.Benchmark/DMMRSuggestionEngine.Benchmark.csproj" Id="15f68f1a-bfec-401d-a178-ca783cc749a0" />
+  <Project Path="DMMRSuggestionEngine.Tests/DMMRSuggestionEngine.Tests.csproj" Id="5b64f16a-b448-427c-ae05-8fd9aad4763a" />
   <Project Path="DMMRSuggestionEngine/DMMRSuggestionEngine.csproj" Id="e313c50e-b97e-4fc0-adde-6d6cb2c0a992" />
 </Solution>
