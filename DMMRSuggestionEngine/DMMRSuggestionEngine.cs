@@ -1,14 +1,15 @@
-﻿using System;
+﻿using DMMRSuggestionEngine.Local;
+using DMMRSuggestionEngine.Structures;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
-using DMMRSuggestionEngine.Local;
-using DMMRSuggestionEngine.Structures;
+using System.Text;
 
 namespace DMMRSuggestionEngine
 {
-    // Restrição notnull para permitir Dictionary<T, SuggestionItem>
-    public class DMMRSuggestionEngine<T> where T : notnull
+    public class DMMRSuggestionEngine<T> : IDMMRSuggestionEngine<T> where T : notnull
     {
         private class SuggestionItem
         {
@@ -18,17 +19,17 @@ namespace DMMRSuggestionEngine
         }
 
         private readonly List<SuggestionItem> _items = new();
-        private Dictionary<T, SuggestionItem> _itemLookup = new();
-        private BKTree<SuggestionItem>? _bkTree;
-        private bool _useBkTree = false;
+        private IBKTree<SuggestionItem>? _bkTree;
+        private bool _useBkTree;
+        private readonly bool _useUnsafeBKTree;
 
         private readonly int _maxCacheSize = 1000;
         private readonly ConcurrentDictionary<string, List<T>> _cache = new();
         private readonly LinkedList<string> _cacheOrder = new();
         private readonly object _cacheLock = new();
 
-        private int _dataVersion = 0;
-        private int _configVersion = 0;
+        private int _dataVersion;
+        private int _configVersion;
 
         public class ReRankSettings
         {
@@ -80,10 +81,25 @@ namespace DMMRSuggestionEngine
             }
         }
 
-        public DMMRSuggestionEngine()
+        public DMMRSuggestionEngine(bool useUnsafeBKTree = false)
         {
+            _useUnsafeBKTree = useUnsafeBKTree;
             _config = new ReRankSettings();
             _config.ConfigChanged += InvalidateCache;
+        }
+
+        private static string NormalizeString(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+            var normalized = input.Normalize(NormalizationForm.FormD);
+            var sb = new StringBuilder();
+            foreach (var c in normalized)
+            {
+                var uc = CharUnicodeInfo.GetUnicodeCategory(c);
+                if (uc != UnicodeCategory.NonSpacingMark)
+                    sb.Append(c);
+            }
+            return sb.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
         }
 
         private void AddToCache(string key, List<T> value)
@@ -91,12 +107,9 @@ namespace DMMRSuggestionEngine
             lock (_cacheLock)
             {
                 if (_cache.ContainsKey(key))
-                {
                     _cacheOrder.Remove(key);
-                }
                 else if (_cache.Count >= _maxCacheSize)
                 {
-                    // Corrigido: obter o primeiro nó e seu valor
                     var firstNode = _cacheOrder.First;
                     if (firstNode != null)
                     {
@@ -138,27 +151,38 @@ namespace DMMRSuggestionEngine
         public void LoadData(IEnumerable<T> data, Func<T, string> textSelector, Func<T, float>? weightSelector = null)
         {
             _items.Clear();
-            _itemLookup = new Dictionary<T, SuggestionItem>();
 
             foreach (var item in data)
             {
                 string text = textSelector(item);
                 if (!string.IsNullOrWhiteSpace(text))
                 {
-                    var sugItem = new SuggestionItem
+                    _items.Add(new SuggestionItem
                     {
                         Entity = item,
-                        NormalizedText = text.ToLowerInvariant(),
+                        NormalizedText = NormalizeString(text),
                         Weight = weightSelector?.Invoke(item) ?? 1.0f
-                    };
-                    _items.Add(sugItem);
-                    _itemLookup[item] = sugItem;
+                    });
                 }
             }
 
             if (_items.Count > 500)
             {
-                BuildBKTree();
+                // Cria a árvore se ainda não existe, ou limpa se já existir
+                if (_bkTree == null)
+                {
+                    _bkTree = _useUnsafeBKTree
+                        ? new UnsafeBKTree<SuggestionItem>()
+                        : new SafeBKTree<SuggestionItem>();
+                }
+                else
+                {
+                    _bkTree.Clear();
+                }
+
+                foreach (var item in _items)
+                    _bkTree.Add(item.NormalizedText, item);
+
                 _useBkTree = true;
             }
             else
@@ -171,15 +195,6 @@ namespace DMMRSuggestionEngine
             _dataVersion++;
         }
 
-        private void BuildBKTree()
-        {
-            _bkTree = new BKTree<SuggestionItem>();
-            foreach (var item in _items)
-            {
-                _bkTree.Add(item.NormalizedText, item);
-            }
-        }
-
         public List<T> Suggest(string query, int maxAllowedErrors = 2, int maxResults = 5)
         {
             if (string.IsNullOrWhiteSpace(query)) return new List<T>();
@@ -189,7 +204,7 @@ namespace DMMRSuggestionEngine
             if (TryGetFromCache(cacheKey, out var cachedResult))
                 return cachedResult!;
 
-            string search = query.ToLowerInvariant();
+            string search = NormalizeString(query);
             int searchLen = search.Length;
 
             IEnumerable<(SuggestionItem Item, int Distance)> candidates;
@@ -239,7 +254,7 @@ namespace DMMRSuggestionEngine
             else
             {
                 result = candidates.OrderBy(c => c.Distance)
-                                   .ThenBy(c => c.Item.Weight)
+                                   .ThenByDescending(c => c.Item.Weight)
                                    .Take(maxResults)
                                    .Select(c => c.Item.Entity)
                                    .ToList();

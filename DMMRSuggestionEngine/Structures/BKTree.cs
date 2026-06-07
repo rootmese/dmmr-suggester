@@ -7,10 +7,13 @@ namespace DMMRSuggestionEngine.Structures
 {
     /// <summary>
     /// Implementação de uma BK-Tree para busca fuzzy eficiente.
+    /// Thread-safe para leituras e escritas concorrentes (uso de lock).
     /// </summary>
     /// <typeparam name="T">Tipo do item armazenado.</typeparam>
     public class BKTree<T>
     {
+        private readonly object _lockObject = new object();
+
         private class Node
         {
             public string Key { get; set; }
@@ -28,71 +31,83 @@ namespace DMMRSuggestionEngine.Structures
             _distanceFunc = distanceFunc ?? DMMRFuzzyAlgorithm.CalculateDistance;
         }
 
+        /// <summary>
+        /// Adiciona um item à árvore. Thread-safe.
+        /// </summary>
         public void Add(string key, T value)
         {
             if (string.IsNullOrEmpty(key)) throw new ArgumentException("Key cannot be null or empty");
             key = key.ToLowerInvariant();
 
-            if (_root == null)
+            lock (_lockObject)
             {
-                _root = new Node(key, value);
-                return;
-            }
-
-            Node current = _root;
-            while (true)
-            {
-                int dist = _distanceFunc(key, current.Key);
-                if (dist == 0)
+                if (_root == null)
                 {
-                    current.Value = value;
+                    _root = new Node(key, value);
                     return;
                 }
 
-                if (current.Children.TryGetValue(dist, out Node? next) && next != null)
-                    current = next;
-                else
+                Node current = _root;
+                while (true)
                 {
-                    current.Children[dist] = new Node(key, value);
-                    return;
+                    int dist = _distanceFunc(key, current.Key);
+                    if (dist == 0)
+                    {
+                        current.Value = value;
+                        return;
+                    }
+
+                    if (current.Children.TryGetValue(dist, out Node? next) && next != null)
+                        current = next;
+                    else
+                    {
+                        current.Children[dist] = new Node(key, value);
+                        return;
+                    }
                 }
             }
         }
 
         /// <summary>
-        /// Busca todos os itens com distância <= maxDistance.
+        /// Busca todos os itens com distância <= maxDistance. Thread-safe.
         /// </summary>
         public List<(T Value, int Distance)> Search(string query, int maxDistance)
         {
-            if (_root == null || string.IsNullOrEmpty(query)) return new List<(T, int)>();
-            query = query.ToLowerInvariant();
-
-            var results = new List<(T, int)>();
-            var stack = new Stack<Node>();
-            stack.Push(_root);
-
-            while (stack.Count > 0)
+            lock (_lockObject)
             {
-                Node current = stack.Pop();
-                int dist = _distanceFunc(query, current.Key);
+                if (_root == null || string.IsNullOrEmpty(query))
+                    return new List<(T, int)>();
 
-                if (dist <= maxDistance)
-                    results.Add((current.Value, dist));
+                query = query.ToLowerInvariant();
+                var results = new List<(T, int)>();
+                var stack = new Stack<Node>();
+                stack.Push(_root);
 
-                int lower = dist - maxDistance;
-                int upper = dist + maxDistance;
-
-                foreach (var (childDist, child) in current.Children)
+                while (stack.Count > 0)
                 {
-                    if (childDist >= lower && childDist <= upper)
-                        stack.Push(child);
+                    Node current = stack.Pop();
+                    int dist = _distanceFunc(query, current.Key);
+
+                    if (dist <= maxDistance)
+                        results.Add((current.Value, dist));
+
+                    int lower = dist - maxDistance;
+                    int upper = dist + maxDistance;
+
+                    foreach (var (childDist, child) in current.Children)
+                    {
+                        if (childDist >= lower && childDist <= upper)
+                            stack.Push(child);
+                    }
                 }
+                return results;
             }
-            return results;
         }
 
         /// <summary>
-        /// Versão assíncrona – executa a busca em outra thread.
+        /// Versão "assíncrona" que executa a busca em uma thread da pool.
+        /// Atenção: Não é verdadeiramente assíncrono (apenas Task.Run).
+        /// Prefira usar Search diretamente se não precisar de async.
         /// </summary>
         public async Task<List<(T Value, int Distance)>> SearchAsync(string query, int maxDistance)
         {

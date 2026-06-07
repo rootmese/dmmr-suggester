@@ -6,7 +6,7 @@ using DMMRSuggestionEngine.Models;
 
 namespace DMMRSuggestionEngine.OpenSearch
 {
-    public static class OpenSearchConfiguration
+    public static class DMMROpenSearchConfiguration
     {
         public static async Task CreateIndexIfNotExistsAsync(OpenSearchClient client, string indexName, int embeddingDimension = 384)
         {

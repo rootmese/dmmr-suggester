@@ -11,13 +11,13 @@ using System.Threading.Tasks;
 
 namespace DMMRSuggestionEngine.OpenSearch
 {
-    public class HybridSearchService
+    public class DMMROHybridSearchService : IHybridSearchService
     {
         private readonly OpenSearchClient _client;
         private readonly IOpenSearchLowLevelClient _lowLevelClient;
         private readonly string _indexName;
 
-        public HybridSearchService(OpenSearchClient client, string indexName)
+        public DMMROHybridSearchService(OpenSearchClient client, string indexName)
         {
             _client = client;
             _lowLevelClient = client.LowLevel;
