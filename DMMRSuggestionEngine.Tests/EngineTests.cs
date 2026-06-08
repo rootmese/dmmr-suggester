@@ -6,6 +6,12 @@ namespace DMMRSuggestionEngine.Tests
 {
     public class EngineTests
     {
+        private class TestItem
+        {
+            public string Name { get; set; } = "";
+            public float Weight { get; set; }
+        }
+
         [Fact]
         public void Suggest_WithExactMatch_ReturnsItem()
         {
@@ -46,20 +52,20 @@ namespace DMMRSuggestionEngine.Tests
         [Fact]
         public void Suggest_WithReRank_ChangesOrder()
         {
-            var engine = new DMMRSuggestionEngine<string>();
+            var engine = new DMMRSuggestionEngine<TestItem>();
+
             var items = new[]
             {
-                new { Name = "abc", Weight = 0.5f },
-                new { Name = "abcd", Weight = 1.0f },
-                new { Name = "ab", Weight = 0.2f }
+                new TestItem { Name = "abc", Weight = 0.5f },
+                new TestItem { Name = "abcd", Weight = 1.0f },
+                new TestItem { Name = "ab", Weight = 0.2f }
             };
+
             engine.LoadData(items, x => x.Name, x => x.Weight);
-            engine.Config.Enabled = true;
-            engine.Config.FuzzyWeight = 0.3f;
-            engine.Config.WeightWeight = 0.7f;
 
             var result = engine.Suggest("ab", maxAllowedErrors: 1, maxResults: 3);
-            Assert.Equal("abcd", result.First());
+
+            Assert.Equal("abcd", result.First().Name);
         }
 
         [Fact]
