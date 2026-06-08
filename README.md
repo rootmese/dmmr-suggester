@@ -250,7 +250,7 @@ Suitable for:
 
 Benchmarks executed on Intel Core i7-8550U, .NET 9.0, Release mode.  
 Each operation is a fuzzy query with `maxAllowedErrors=2` (except ExactMatch).  
-*Note: results reflect the improved scoring logic (weight normalization, configurable fuzzy curves, optional exact-match bonus) and optimized reranking (struct arrays, manual sort).*
+*Note: results reflect the improved scoring logic (weight normalization, configurable fuzzy curves, optional exact-match bonus) and optimized reranking (struct arrays, manual sort)*
 
 | Method                       | Items   | Latency (median) | Allocation per call | Observation                                      |
 |------------------------------|---------|------------------|---------------------|--------------------------------------------------|
