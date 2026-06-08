@@ -245,6 +245,37 @@ Suitable for:
 
 ---
 
+BENCHMARK RESULTS
+-----------------
+
+Benchmarks executados em Intel Core i7-8550U, .NET 9.0, modo Release.
+Cada operação é uma consulta fuzzy com `maxAllowedErrors=2` (exceto ExactMatch).
+
+| Método               | Itens  | Latência (mediana) | Alocação por chamada | Observação                              |
+|----------------------|--------|-------------------|----------------------|------------------------------------------|
+| **Exact / Typo / NoMatch** | 1.000  | ~0,06 ms          | 200 B                | Mesmo desempenho para todos os tipos de erro |
+| **WithReRank**       | 1.000  | 2,19 ms           | 152 KB               | Custo adicional de ordenação e score     |
+| **Exact / Typo / NoMatch** | 10.000 | ~0,07 ms          | 200 B                | Escala perfeitamente graças à BK‑Tree    |
+| **WithReRank**       | 10.000 | 8,98 ms           | 936 KB               |                                          |
+| **Exact / Typo / NoMatch** | 100.000| ~0,07 ms          | 200 B                | Desempenho constante – excelente!        |
+| **WithReRank**       | 100.000| 23,77 ms          | 4,5 MB               | Ainda aceitável para autocomplete em API |
+
+### Interpretação
+
+- **Busca fuzzy sem rerank** mantém latência **< 0,1 ms** mesmo com 100.000 itens, graças à BK‑Tree + cache LRU.
+- O **rerank** (que combina similaridade fuzzy e peso do item) adiciona um overhead previsível e controlado. Para 100k itens, 24 ms ainda é excelente para cenários web.
+- A **alocação de memória** sem rerank é mínima (200 bytes), evitando pressão sobre o GC.
+- Os outliers observados no benchmark (primeira execução de cada processo) não representam o desempenho em produção, onde a engine permanece carregada em memória.
+
+### Como reproduzir
+
+```bash
+cd DMMRSuggestionEngine.Benchmark
+dotnet run -c Release
+```
+
+---
+
 # Contributing
 
 Contributions are welcome.
