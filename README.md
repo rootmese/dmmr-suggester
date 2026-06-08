@@ -250,29 +250,32 @@ Suitable for:
 
 Benchmarks executed on Intel Core i7-8550U, .NET 9.0, Release mode.  
 Each operation is a fuzzy query with `maxAllowedErrors=2` (except ExactMatch).  
-*Note: results reflect the improved scoring logic (weight normalization, configurable fuzzy curves, optional exact-match bonus)*
+*Note: results reflect the improved scoring logic (weight normalization, configurable fuzzy curves, optional exact-match bonus) and optimized reranking (struct arrays, manual sort).*
 
 | Method                       | Items   | Latency (median) | Allocation per call | Observation                                      |
 |------------------------------|---------|------------------|---------------------|--------------------------------------------------|
-| **Exact / Typo / NoMatch**   | 1,000   | ~0.08 ms         | 672 B               | Slightly higher allocation due to normalization |
-| **WithReRank**               | 1,000   | 1.48 ms          | 152 KB              | Faster than before – improved scoring path      |
-| **Exact / Typo / NoMatch**   | 10,000  | ~0.08 ms         | 672 B               | Still scales perfectly with BK‑Tree             |
-| **WithReRank**               | 10,000  | 9.96 ms          | 936 KB              | Consistent overhead                            |
-| **Exact / Typo / NoMatch**   | 100,000 | ~0.11 ms         | 672 B               | Excellent constant‑time behaviour               |
-| **WithReRank**               | 100,000 | 25.24 ms         | 4.56 MB             | Very usable for API / web autocomplete          |
+| **Exact / Typo / NoMatch**   | 1,000   | ~0.09 ms         | 672 B               | Minimal allocation, same for all error types    |
+| **WithReRank**               | 1,000   | 4.31 ms          | 146 KB              | Reliable and predictable overhead               |
+| **Exact / Typo / NoMatch**   | 10,000  | ~0.12 ms         | 672 B               | Scales perfectly thanks to BK‑Tree              |
+| **WithReRank**               | 10,000  | 26.11 ms         | 906 KB              | Slightly higher but still fast                  |
+| **Exact / Typo / NoMatch**   | 100,000 | ~0.10 ms         | 672 B               | Excellent constant‑time behaviour               |
+| **WithReRank**               | 100,000 | 27.88 ms         | 4.33 MB             | Fully acceptable for API / web autocomplete     |
 
 ## Interpretation
 
-- **Fuzzy search without rerank** keeps median latency **below 0.12 ms** even with 100,000 items, thanks to the BK‑Tree index and LRU cache.  
-- **Rerank** (combining fuzzy similarity and item weight) now includes **weight normalization** (weights scaled to [0,1]), optional **non‑linear fuzzy curves** (exponential, inverse), and an **exact‑match bonus**. Overhead is controlled: ~1.5 ms for 1k items, ~10 ms for 10k, ~25 ms for 100k – still excellent for interactive use.  
-- **Memory allocation** for searches without rerank is only **672 bytes** per call – minimal GC pressure. The small increase from previous 200 bytes is due to richer cache keys and weight normalization, which also improves ranking quality.  
-- Outliers (first cold execution) are not representative of production behaviour; the engine stays warm in memory.
+- **Fuzzy search without rerank** keeps median latency **below 0.15 ms** for all dataset sizes, thanks to the BK‑Tree index and LRU cache.  
+- **Rerank** (combining fuzzy similarity and item weight) now includes **weight normalization** (weights scaled to [0,1]), optional **non‑linear fuzzy curves** (exponential, inverse), and an **exact‑match bonus**. The optimized implementation uses `struct` arrays and `Array.Sort`, reducing GC pressure and improving consistency. Observed latencies: ~4.3 ms (1k), ~26 ms (10k), ~28 ms (100k) – still excellent for interactive use.  
+- **Memory allocation** for searches without rerank is minimal (≈672 bytes per call) – no GC pressure. For rerank, allocations are proportional to the number of candidates (≈150 KB for 1k, up to 4.3 MB for 100k), which is acceptable for typical workloads.  
+- Outliers (first cold execution) are not representative of production performance; the engine stays warm in memory.
 
 ## Key Improvements in This Version
 
 - Weight normalization during `LoadData` (0 ≤ weight ≤ 1)  
 - Three fuzzy score modes: `Linear` (default), `Exponential`, `Inverse`  
 - Optional exact‑match bonus (`PrioritizeExactMatch` + `ExactMatchBonus`)  
+- High‑performance reranking using `struct` arrays and manual sorting  
+- Better concurrency with `ReaderWriterLockSlim` on the cache  
+- Reduced LINQ usage and stack‑allocated buffers for Levenshtein distance  
 - Fully backward‑compatible defaults  
 
 ## Features
