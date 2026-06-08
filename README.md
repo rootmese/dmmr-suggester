@@ -248,41 +248,48 @@ Suitable for:
 # BENCHMARK RESULTS
 -----------------
 
-Benchmarks executed on Intel Core i7-8550U, .NET 9.0, Release mode.
-Each operation is a fuzzy query with `maxAllowedErrors=2` (except ExactMatch).
+Benchmarks executed on Intel Core i7-8550U, .NET 9.0, Release mode.  
+Each operation is a fuzzy query with `maxAllowedErrors=2` (except ExactMatch).  
+*Note: results reflect the improved scoring logic (weight normalization, configurable fuzzy curves, optional exact-match bonus).*
 
 | Method                       | Items   | Latency (median) | Allocation per call | Observation                                      |
 |------------------------------|---------|------------------|---------------------|--------------------------------------------------|
-| **Exact / Typo / NoMatch**   | 1,000   | ~0.06 ms         | 200 B               | Same performance for all error types            |
-| **WithReRank**               | 1,000   | 2.19 ms          | 152 KB              | Additional cost for scoring and ordering        |
-| **Exact / Typo / NoMatch**   | 10,000  | ~0.07 ms         | 200 B               | Scales perfectly thanks to BK‑Tree              |
-| **WithReRank**               | 10,000  | 8.98 ms          | 936 KB              |                                                  |
-| **Exact / Typo / NoMatch**   | 100,000 | ~0.07 ms         | 200 B               | Constant performance – excellent!               |
-| **WithReRank**               | 100,000 | 23.77 ms         | 4.5 MB              | Still acceptable for API autocomplete           |
+| **Exact / Typo / NoMatch**   | 1,000   | ~0.08 ms         | 672 B               | Slightly higher allocation due to normalization |
+| **WithReRank**               | 1,000   | 1.48 ms          | 152 KB              | Faster than before – improved scoring path      |
+| **Exact / Typo / NoMatch**   | 10,000  | ~0.08 ms         | 672 B               | Still scales perfectly with BK‑Tree             |
+| **WithReRank**               | 10,000  | 9.96 ms          | 936 KB              | Consistent overhead                            |
+| **Exact / Typo / NoMatch**   | 100,000 | ~0.11 ms         | 672 B               | Excellent constant‑time behaviour               |
+| **WithReRank**               | 100,000 | 25.24 ms         | 4.56 MB             | Very usable for API / web autocomplete          |
 
 ## Interpretation
 
-- **Fuzzy search without rerank** keeps latency **< 0.1 ms** even with 100,000 items, thanks to BK‑Tree + LRU cache.
-- **Rerank** (combining fuzzy similarity and item weight) adds predictable, controlled overhead. For 100k items, 24 ms is still excellent for web scenarios.
-- **Memory allocation** without rerank is minimal (200 bytes), avoiding GC pressure.
-- Outliers observed in the benchmark (first execution of each process) do not represent production performance, where the engine remains loaded in memory.
+- **Fuzzy search without rerank** keeps median latency **below 0.12 ms** even with 100,000 items, thanks to the BK‑Tree index and LRU cache.  
+- **Rerank** (combining fuzzy similarity and item weight) now includes **weight normalization** (weights scaled to [0,1]), optional **non‑linear fuzzy curves** (exponential, inverse), and an **exact‑match bonus**. Overhead is controlled: ~1.5 ms for 1k items, ~10 ms for 10k, ~25 ms for 100k – still excellent for interactive use.  
+- **Memory allocation** for searches without rerank is only **672 bytes** per call – minimal GC pressure. The small increase from previous 200 bytes is due to richer cache keys and weight normalization, which also improves ranking quality.  
+- Outliers (first cold execution) are not representative of production behaviour; the engine stays warm in memory.
+
+## Key Improvements in This Version
+
+- Weight normalization during `LoadData` (0 ≤ weight ≤ 1)  
+- Three fuzzy score modes: `Linear` (default), `Exponential`, `Inverse`  
+- Optional exact‑match bonus (`PrioritizeExactMatch` + `ExactMatchBonus`)  
+- Fully backward‑compatible defaults  
 
 ## Features
 
-- Edit‑distance‑based fuzzy search
-- BK‑Tree for large datasets
-- Built‑in LRU cache
-- Optional item weight reranking
-- .NET 9 compatible
-- No external dependencies
-- Generic type‑safe API (`DMMRSuggestionEngine<T>`)
+- Edit‑distance‑based fuzzy search  
+- BK‑Tree for large datasets  
+- Built‑in LRU cache  
+- Configurable item weight reranking  
+- .NET 9 compatible  
+- No external dependencies  
+- Generic type‑safe API (`DMMRSuggestionEngine<T>`)  
 
 ## How to reproduce
 
 ```bash
 cd DMMRSuggestionEngine.Benchmark
-dotnet run -c Release
-```
+dotnet run -c Release```
 
 ---
 

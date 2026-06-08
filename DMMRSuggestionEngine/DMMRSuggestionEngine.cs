@@ -9,6 +9,16 @@ using System.Text;
 
 namespace DMMRSuggestionEngine
 {
+    public enum FuzzyScoreMode
+    {
+        /// <summary>Score = 1 - normalizedDistance (comportamento original)</summary>
+        Linear,
+        /// <summary>Score = exp(-k * normalizedDistance) - penaliza erros pequenos suavemente</summary>
+        Exponential,
+        /// <summary>Score = 1 / (1 + k * normalizedDistance) - curva similar a exponencial mas mais simples</summary>
+        Inverse
+    }
+
     public class DMMRSuggestionEngine<T> : IDMMRSuggestionEngine<T> where T : notnull
     {
         private class SuggestionItem
@@ -36,6 +46,11 @@ namespace DMMRSuggestionEngine
             private bool _enabled;
             private float _fuzzyWeight;
             private float _weightWeight;
+            private FuzzyScoreMode _fuzzyMode;
+            private float _fuzzyExponentialFactor;
+            private float _fuzzyInverseFactor;
+            private bool _prioritizeExactMatch;
+            private float _exactMatchBonus;
 
             public bool Enabled
             {
@@ -55,6 +70,40 @@ namespace DMMRSuggestionEngine
                 set { _weightWeight = value; OnConfigChanged(); }
             }
 
+            public FuzzyScoreMode FuzzyMode
+            {
+                get => _fuzzyMode;
+                set { _fuzzyMode = value; OnConfigChanged(); }
+            }
+
+            /// <summary>Fator k para o modo Exponential (score = exp(-k * normalizedDistance)). Default = 4f.</summary>
+            public float FuzzyExponentialFactor
+            {
+                get => _fuzzyExponentialFactor;
+                set { _fuzzyExponentialFactor = value; OnConfigChanged(); }
+            }
+
+            /// <summary>Fator k para o modo Inverse (score = 1 / (1 + k * normalizedDistance)). Default = 5f.</summary>
+            public float FuzzyInverseFactor
+            {
+                get => _fuzzyInverseFactor;
+                set { _fuzzyInverseFactor = value; OnConfigChanged(); }
+            }
+
+            /// <summary>Se true, adiciona um bônus ao score de itens com distância exata 0.</summary>
+            public bool PrioritizeExactMatch
+            {
+                get => _prioritizeExactMatch;
+                set { _prioritizeExactMatch = value; OnConfigChanged(); }
+            }
+
+            /// <summary>Bônus somado ao score quando PrioritizeExactMatch = true e Distance == 0. Default = 1.0f.</summary>
+            public float ExactMatchBonus
+            {
+                get => _exactMatchBonus;
+                set { _exactMatchBonus = value; OnConfigChanged(); }
+            }
+
             public event Action? ConfigChanged;
 
             public ReRankSettings()
@@ -62,6 +111,11 @@ namespace DMMRSuggestionEngine
                 _enabled = false;
                 _fuzzyWeight = 0.7f;
                 _weightWeight = 0.3f;
+                _fuzzyMode = FuzzyScoreMode.Linear;
+                _fuzzyExponentialFactor = 4f;
+                _fuzzyInverseFactor = 5f;
+                _prioritizeExactMatch = false;
+                _exactMatchBonus = 1.0f;
             }
 
             private void OnConfigChanged() => ConfigChanged?.Invoke();
@@ -150,25 +204,36 @@ namespace DMMRSuggestionEngine
 
         public void LoadData(IEnumerable<T> data, Func<T, string> textSelector, Func<T, float>? weightSelector = null)
         {
-            _items.Clear();
+            // Coleta temporária para calcular peso máximo
+            var tempItems = new List<(T Entity, string RawText, float RawWeight)>();
 
             foreach (var item in data)
             {
                 string text = textSelector(item);
                 if (!string.IsNullOrWhiteSpace(text))
                 {
-                    _items.Add(new SuggestionItem
-                    {
-                        Entity = item,
-                        NormalizedText = NormalizeString(text),
-                        Weight = weightSelector?.Invoke(item) ?? 1.0f
-                    });
+                    float rawWeight = weightSelector?.Invoke(item) ?? 1.0f;
+                    tempItems.Add((item, text, rawWeight));
                 }
             }
 
+            float maxWeight = tempItems.Count > 0 ? tempItems.Max(x => x.RawWeight) : 1f;
+            _items.Clear();
+
+            foreach (var (entity, rawText, rawWeight) in tempItems)
+            {
+                float normalizedWeight = maxWeight > 0 ? rawWeight / maxWeight : 1f;
+                _items.Add(new SuggestionItem
+                {
+                    Entity = entity,
+                    NormalizedText = NormalizeString(rawText),
+                    Weight = normalizedWeight
+                });
+            }
+
+            // Decide se usa BK-Tree baseado no número de itens
             if (_items.Count > 500)
             {
-                // Cria a árvore se ainda não existe, ou limpa se já existir
                 if (_bkTree == null)
                 {
                     _bkTree = _useUnsafeBKTree
@@ -199,7 +264,7 @@ namespace DMMRSuggestionEngine
         {
             if (string.IsNullOrWhiteSpace(query)) return new List<T>();
 
-            string cacheKey = $"{query}|{maxAllowedErrors}|{maxResults}|{Config.Enabled}|{Config.FuzzyWeight}|{Config.WeightWeight}|{_dataVersion}|{_configVersion}";
+            string cacheKey = $"{query}|{maxAllowedErrors}|{maxResults}|{Config.Enabled}|{Config.FuzzyWeight}|{Config.WeightWeight}|{Config.FuzzyMode}|{Config.FuzzyExponentialFactor}|{Config.FuzzyInverseFactor}|{Config.PrioritizeExactMatch}|{Config.ExactMatchBonus}|{_dataVersion}|{_configVersion}";
 
             if (TryGetFromCache(cacheKey, out var cachedResult))
                 return cachedResult!;
@@ -242,8 +307,25 @@ namespace DMMRSuggestionEngine
                 {
                     float maxPossibleDist = Math.Max(search.Length, c.Item.NormalizedText.Length);
                     float normalizedDistance = maxPossibleDist > 0 ? c.Distance / maxPossibleDist : 0;
-                    float fuzzyScore = 1 - normalizedDistance;
+                    float fuzzyScore;
+
+                    switch (Config.FuzzyMode)
+                    {
+                        case FuzzyScoreMode.Exponential:
+                            fuzzyScore = MathF.Exp(-normalizedDistance * Config.FuzzyExponentialFactor);
+                            break;
+                        case FuzzyScoreMode.Inverse:
+                            fuzzyScore = 1f / (1f + normalizedDistance * Config.FuzzyInverseFactor);
+                            break;
+                        default: // Linear
+                            fuzzyScore = 1 - normalizedDistance;
+                            break;
+                    }
+
                     float finalScore = (Config.FuzzyWeight * fuzzyScore) + (Config.WeightWeight * c.Item.Weight);
+                    if (Config.PrioritizeExactMatch && c.Distance == 0)
+                        finalScore += Config.ExactMatchBonus;
+
                     return (Entity: c.Item.Entity, Score: finalScore);
                 })
                 .OrderByDescending(x => x.Score)
