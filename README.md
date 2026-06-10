@@ -255,7 +255,7 @@ Suitable for:
 -----------------
 
 Benchmarks executed on Intel Core i7-8550U, .NET 9.0, Release mode.  
-Each operation is a fuzzy query with `maxAllowedErrors=2` (except ExactMatch).  
+Each operation is a fuzzy query with `maxAllowedErrors=2` (except ExactMatch)
 *Note: results reflect the optimized Top-K reranking (using ArrayPool, struct comparers, and early-exit top-K insertion) and stackalloc-based Levenshtein distance calculations.*
 
 | Method                       | Items   | Latency (median) | Allocation per call | Observation                                      |
