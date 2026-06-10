@@ -37,14 +37,17 @@ MAIN FEATURES
 QUICK EXAMPLE
 -------------
 
-var engine = new DMMRLocalSuggester<int>();
+var engine = new DMMRSuggestionEngine<(int Id, string Name, float Weight)>();
 
 engine.LoadData(new[]
 {
-    (1, "iPhone 16", 100),
-    (2, "Samsung Galaxy", 80),
-    (3, "Motorola Edge", 50)
-});
+    (1, "iPhone 16", 100f),
+    (2, "Samsung Galaxy", 80f),
+    (3, "Motorola Edge", 50f)
+},
+x => x.Name,
+x => x.Weight
+);
 
 var results = engine.Suggest("iphon");
 
@@ -84,12 +87,12 @@ ROADMAP
 
 Version 1.0 goals:
 
-- Unit Tests
-- BenchmarkDotNet
-- XML Documentation
-- CI/CD Pipeline
-- NuGet Publishing
-- Additional Ranking Algorithms
+- [x] Unit Tests
+- [x] BenchmarkDotNet
+- [ ] XML Documentation
+- [ ] CI/CD Pipeline
+- [ ] NuGet Publishing
+- [ ] Additional Ranking Algorithms
 
 AUTHOR
 ------

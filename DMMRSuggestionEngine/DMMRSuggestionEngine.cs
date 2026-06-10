@@ -1,10 +1,12 @@
-﻿using DMMRSuggestionEngine.Local;
+using DMMRSuggestionEngine.Local;
 using DMMRSuggestionEngine.Structures;
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 
@@ -30,6 +32,11 @@ namespace DMMRSuggestionEngine
         {
             public T Entity;
             public float Score;
+        }
+
+        private struct ReRankComparer : IComparer<ReRankResult>
+        {
+            public int Compare(ReRankResult x, ReRankResult y) => y.Score.CompareTo(x.Score);
         }
 
         private readonly List<SuggestionItem> _items = new();
@@ -288,42 +295,79 @@ namespace DMMRSuggestionEngine
             List<T> result;
             if (Config.Enabled)
             {
-                // Alocar array de structs na stack (ou heap se for grande)
-                var scores = new ReRankResult[candidates.Count];
-                for (int i = 0; i < candidates.Count; i++)
-                {
-                    var (item, dist) = candidates[i];
-                    float maxPossibleDist = Math.Max(normalizedQuery.Length, item.NormalizedText.Length);
-                    float normalizedDistance = maxPossibleDist > 0 ? dist / maxPossibleDist : 0f;
+                int k = Math.Min(maxResults, candidates.Count);
+                if (k <= 0)
+                    return new List<T>();
 
-                    float fuzzyScore;
-                    switch (Config.FuzzyMode)
+                // Renta um buffer minúsculo do tamanho de k para guardar os melhores resultados
+                ReRankResult[] topK = ArrayPool<ReRankResult>.Shared.Rent(k);
+                int count = 0;
+
+                try
+                {
+                    for (int i = 0; i < candidates.Count; i++)
                     {
-                        case FuzzyScoreMode.Exponential:
-                            fuzzyScore = MathF.Exp(-normalizedDistance * Config.FuzzyExponentialFactor);
-                            break;
-                        case FuzzyScoreMode.Inverse:
-                            fuzzyScore = 1f / (1f + normalizedDistance * Config.FuzzyInverseFactor);
-                            break;
-                        default:
-                            fuzzyScore = 1 - normalizedDistance;
-                            break;
+                        var (item, dist) = candidates[i];
+                        float maxPossibleDist = Math.Max(normalizedQuery.Length, item.NormalizedText.Length);
+                        float normalizedDistance = maxPossibleDist > 0 ? dist / maxPossibleDist : 0f;
+
+                        float fuzzyScore;
+                        switch (Config.FuzzyMode)
+                        {
+                            case FuzzyScoreMode.Exponential:
+                                fuzzyScore = MathF.Exp(-normalizedDistance * Config.FuzzyExponentialFactor);
+                                break;
+                            case FuzzyScoreMode.Inverse:
+                                fuzzyScore = 1f / (1f + normalizedDistance * Config.FuzzyInverseFactor);
+                                break;
+                            default:
+                                fuzzyScore = 1 - normalizedDistance;
+                                break;
+                        }
+
+                        float finalScore = (Config.FuzzyWeight * fuzzyScore) + (Config.WeightWeight * item.Weight);
+                        if (Config.PrioritizeExactMatch && dist == 0)
+                            finalScore += Config.ExactMatchBonus;
+
+                        if (count < k)
+                        {
+                            topK[count++] = new ReRankResult { Entity = item.Entity, Score = finalScore };
+                            if (count == k)
+                            {
+                                // Ordena o buffer inicial em ordem decrescente de score
+                                Array.Sort(topK, 0, k, new ReRankComparer());
+                            }
+                        }
+                        else if (finalScore > topK[k - 1].Score)
+                        {
+                            // Substitui o menor elemento e faz a ordenação de inserção
+                            topK[k - 1] = new ReRankResult { Entity = item.Entity, Score = finalScore };
+
+                            // Bubble up para manter a ordenação
+                            for (int j = k - 2; j >= 0; j--)
+                            {
+                                if (topK[j + 1].Score > topK[j].Score)
+                                {
+                                    var temp = topK[j];
+                                    topK[j] = topK[j + 1];
+                                    topK[j + 1] = temp;
+                                }
+                                else
+                                {
+                                    break;
+                                }
+                            }
+                        }
                     }
 
-                    float finalScore = (Config.FuzzyWeight * fuzzyScore) + (Config.WeightWeight * item.Weight);
-                    if (Config.PrioritizeExactMatch && dist == 0)
-                        finalScore += Config.ExactMatchBonus;
-
-                    scores[i] = new ReRankResult { Entity = item.Entity, Score = finalScore };
+                    result = new List<T>(count);
+                    for (int i = 0; i < count; i++)
+                        result.Add(topK[i].Entity);
                 }
-
-                // Ordenação manual (Array.Sort usa introspective sort, já otimizado)
-                Array.Sort(scores, (a, b) => b.Score.CompareTo(a.Score));
-
-                int take = Math.Min(maxResults, scores.Length);
-                result = new List<T>(take);
-                for (int i = 0; i < take; i++)
-                    result.Add(scores[i].Entity);
+                finally
+                {
+                    ArrayPool<ReRankResult>.Shared.Return(topK, clearArray: RuntimeHelpers.IsReferenceOrContainsReferences<ReRankResult>());
+                }
             }
             else
             {

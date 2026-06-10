@@ -1,4 +1,4 @@
-﻿
+
 
 namespace DMMRSuggestionEngine.Local
 {
@@ -22,8 +22,8 @@ namespace DMMRSuggestionEngine.Local
             int n = s.Length;
             int m = t.Length;
 
-            int[] prev = new int[n + 1];
-            int[] curr = new int[n + 1];
+            Span<int> prev = n < 256 ? stackalloc int[n + 1] : new int[n + 1];
+            Span<int> curr = n < 256 ? stackalloc int[n + 1] : new int[n + 1];
 
             for (int i = 0; i <= n; i++)
                 prev[i] = i;
@@ -39,7 +39,9 @@ namespace DMMRSuggestionEngine.Local
                         prev[i - 1] + cost
                     );
                 }
-                (prev, curr) = (curr, prev);
+                var temp = prev;
+                prev = curr;
+                curr = temp;
             }
             return prev[n];
         }

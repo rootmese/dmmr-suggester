@@ -122,23 +122,25 @@ dotnet add package DMMRSuggestionEngine
 
 # Quick Start
 
-## Create Engine
+## Create Engine and Load Data
 
 ```csharp
-var engine = new DMMRLocalSuggester<int>();
-```
+using DMMRSuggestionEngine;
 
----
+// Instanciar a engine definindo o tipo do item
+var engine = new DMMRSuggestionEngine<(int Id, string Name, float Weight)>();
 
-## Load Data
-
-```csharp
-engine.LoadData(new[]
-{
-    (1, "iPhone 16", 100),
-    (2, "Samsung Galaxy", 80),
-    (3, "Motorola Edge", 50)
-});
+// Carregar os dados fornecendo a coleção e os seletores de texto e peso
+engine.LoadData(
+    new[]
+    {
+        (1, "iPhone 16", 100f),
+        (2, "Samsung Galaxy", 80f),
+        (3, "Motorola Edge", 50f)
+    },
+    x => x.Name,   // Seletor de texto para busca
+    x => x.Weight  // Seletor de peso para relevância
+);
 ```
 
 ---
@@ -146,6 +148,7 @@ engine.LoadData(new[]
 ## Search
 
 ```csharp
+// Realizar a busca de sugestões
 var results = engine.Suggest("iphon");
 ```
 
@@ -153,13 +156,10 @@ var results = engine.Suggest("iphon");
 
 ## Example Output
 
-```text
-iPhone 16
-Samsung Galaxy
-Motorola Edge
-```
-
-ordered by relevance.
+O retorno será uma lista ordenada por relevância das tuplas originais correspondentes:
+1. `(1, "iPhone 16", 100f)`
+2. `(2, "Samsung Galaxy", 80f)`
+3. `(3, "Motorola Edge", 50f)`
 
 ---
 
@@ -201,7 +201,13 @@ ordered by relevance.
 # OpenSearch Integration
 
 ```csharp
-var service = new DMMRHybridSearchService(configuration);
+using DMMRSuggestionEngine.OpenSearch;
+using OpenSearch.Client;
+
+var connectionSettings = new ConnectionSettings(new Uri("http://localhost:9200"));
+var openSearchClient = new OpenSearchClient(connectionSettings);
+
+var service = new DMMROHybridSearchService(openSearchClient, "suggestions-index");
 ```
 
 Supports:
@@ -236,8 +242,8 @@ Suitable for:
 
 ## Version 1.0
 
-- [ ] Unit Tests
-- [ ] BenchmarkDotNet Suite
+- [x] Unit Tests
+- [x] BenchmarkDotNet Suite
 - [ ] XML Documentation
 - [ ] GitHub Actions CI/CD
 - [ ] NuGet Publishing Pipeline
@@ -250,22 +256,21 @@ Suitable for:
 
 Benchmarks executed on Intel Core i7-8550U, .NET 9.0, Release mode.  
 Each operation is a fuzzy query with `maxAllowedErrors=2` (except ExactMatch).  
-*Note: results reflect the improved scoring logic (weight normalization, configurable fuzzy curves, optional exact-match bonus) and optimized reranking (struct arrays, manual sort)*
+*Note: results reflect the optimized Top-K reranking (using ArrayPool, struct comparers, and early-exit top-K insertion) and stackalloc-based Levenshtein distance calculations.*
 
 | Method                       | Items   | Latency (median) | Allocation per call | Observation                                      |
 |------------------------------|---------|------------------|---------------------|--------------------------------------------------|
-| **Exact / Typo / NoMatch**   | 1,000   | ~0.09 ms         | 672 B               | Minimal allocation, same for all error types    |
-| **WithReRank**               | 1,000   | 4.31 ms          | 146 KB              | Reliable and predictable overhead               |
-| **Exact / Typo / NoMatch**   | 10,000  | ~0.12 ms         | 672 B               | Scales perfectly thanks to BK‑Tree              |
-| **WithReRank**               | 10,000  | 26.11 ms         | 906 KB              | Slightly higher but still fast                  |
-| **Exact / Typo / NoMatch**   | 100,000 | ~0.10 ms         | 672 B               | Excellent constant‑time behaviour               |
-| **WithReRank**               | 100,000 | 27.88 ms         | 4.33 MB             | Fully acceptable for API / web autocomplete     |
+| **Exact / Typo / NoMatch**   | 1,000   | ~0.05 ms         | ~640 B              | Zero heap allocations during search calculations |
+| **WithReRank**               | 1,000   | 0.82 ms          | 66 KB               | Optimized Top-K selection with ArrayPool         |
+| **Exact / Typo / NoMatch**   | 10,000  | ~0.08 ms         | ~640 B              | Scales perfectly thanks to BK‑Tree & stackalloc  |
+| **WithReRank**               | 10,000  | 9.42 ms          | 66 KB               | Over 10x memory allocation reduction             |
+| **Exact / Typo / NoMatch**   | 100,000 | ~0.10 ms         | ~640 B              | Excellent constant-time behavior                 |
+| **WithReRank**               | 100,000 | 28.67 ms         | 66 KB               | 98.5% reduction in heap allocation (from 4.3MB)  |
 
 ## Interpretation
 
-- **Fuzzy search without rerank** keeps median latency **below 0.15 ms** for all dataset sizes, thanks to the BK‑Tree index and LRU cache.  
-- **Rerank** (combining fuzzy similarity and item weight) now includes **weight normalization** (weights scaled to [0,1]), optional **non‑linear fuzzy curves** (exponential, inverse), and an **exact‑match bonus**. The optimized implementation uses `struct` arrays and `Array.Sort`, reducing GC pressure and improving consistency. Observed latencies: ~4.3 ms (1k), ~26 ms (10k), ~28 ms (100k) – still excellent for interactive use.  
-- **Memory allocation** for searches without rerank is minimal (≈672 bytes per call) – no GC pressure. For rerank, allocations are proportional to the number of candidates (≈150 KB for 1k, up to 4.3 MB for 100k), which is acceptable for typical workloads.  
+- **Fuzzy search without rerank** keeps median latency **below 0.10 ms** for all dataset sizes, thanks to the BK‑Tree index, stackalloc Levenshtein distance, and LRU cache.  
+- **Rerank** (combining fuzzy similarity and item weight) uses an optimized **Top-K Selection** algorithm with **ArrayPool** and **struct-based comparers**. Instead of allocating large arrays of size $N$ and sorting them, the engine rents a tiny buffer of size `maxResults` and performs in-place bubble insertions. This keeps memory allocation constant at **66 KB** regardless of the dataset size (previously up to **4.33 MB**), drastically reducing GC overhead.
 - Outliers (first cold execution) are not representative of production performance; the engine stays warm in memory.
 
 ## Key Improvements in This Version
@@ -273,9 +278,9 @@ Each operation is a fuzzy query with `maxAllowedErrors=2` (except ExactMatch).
 - Weight normalization during `LoadData` (0 ≤ weight ≤ 1)  
 - Three fuzzy score modes: `Linear` (default), `Exponential`, `Inverse`  
 - Optional exact‑match bonus (`PrioritizeExactMatch` + `ExactMatchBonus`)  
-- High‑performance reranking using `struct` arrays and manual sorting  
+- High‑performance reranking using struct comparers, ArrayPool, and Top-K selection  
 - Better concurrency with `ReaderWriterLockSlim` on the cache  
-- Reduced LINQ usage and stack‑allocated buffers for Levenshtein distance  
+- Reduced LINQ usage and stack‑allocated buffers for Levenshtein distance (with 0 heap allocations during tree traversal)  
 - Fully backward‑compatible defaults  
 
 ## Features

@@ -7,7 +7,7 @@
 
     <!-- ========== Configurações do NuGet ========== -->
     <PackageId>DMMRSuggestionEngine</PackageId>
-    <Version>0.1.2</Version>
+    <Version>0.1.3</Version>
     <Authors>Alessandro Silveira</Authors>
     <Product>DMMR Suggestion Engine</Product>
     <Description>Engine de sugestão com busca fuzzy local e busca híbrida (OpenSearch).</Description>
