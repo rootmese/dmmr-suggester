@@ -238,16 +238,24 @@ Suitable for:
 
 ---
 
-# Roadmap
+## Roadmap
 
-## Version 1.0
+### Version 0.1.5 — Advanced Query Matching
 
-- [x] Unit Tests
-- [x] BenchmarkDotNet Suite
-- [ ] XML Documentation
-- [ ] GitHub Actions CI/CD
-- [ ] NuGet Publishing Pipeline
-- [ ] Additional Ranking Strategies
+#### N-Gram Indexing
+
+One of the next major improvements planned for DMMR Suggestion Engine is support for **N-Gram indexing**.
+
+While BK-Tree indexing is highly effective for typo-tolerant searches, it is less effective when users search using partial phrases, reordered terms, or incomplete expressions.
+
+Example dataset:
+
+```text
+iPhone 16 Pro Max
+Samsung Galaxy S25 Ultra
+Motorola Edge 60```
+
+Estimated deployment date: June 17, 2026
 
 ---
 
