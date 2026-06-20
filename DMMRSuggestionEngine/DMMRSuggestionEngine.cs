@@ -44,6 +44,9 @@ namespace DMMRSuggestionEngine
         private bool _useBkTree;
         private readonly bool _useUnsafeBKTree;
 
+        // ── N-Gram ────────────────────────────────────────────────────────────
+        private readonly NgramIndex _ngramIndex = new();
+
         private readonly int _maxCacheSize = 1000;
         private readonly ConcurrentDictionary<string, List<T>> _cache = new();
         private readonly LinkedList<string> _cacheOrder = new();
@@ -51,6 +54,8 @@ namespace DMMRSuggestionEngine
 
         private int _dataVersion;
         private int _configVersion;
+
+        // ── ReRankSettings ────────────────────────────────────────────────────
 
         public class ReRankSettings
         {
@@ -89,6 +94,59 @@ namespace DMMRSuggestionEngine
             private void OnConfigChanged() => ConfigChanged?.Invoke();
         }
 
+        // ── NgramSettings ─────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Configurações do índice de N-Gramas.
+        /// Permite busca por frases parciais, termos reordenados e prefixos incompletos.
+        /// </summary>
+        public class NgramSettings
+        {
+            private bool _enabled;
+            private int _n;
+            private float _minScore;
+            private bool _padEdges;
+
+            /// <summary>
+            /// Habilita ou desabilita a busca via N-Gram (padrão: true).
+            /// Quando desabilitado, o comportamento é idêntico à versão ≤ 0.1.4.
+            /// </summary>
+            public bool Enabled { get => _enabled; set { _enabled = value; OnConfigChanged(); } }
+
+            /// <summary>
+            /// Tamanho do n-grama (padrão: 3 = trigrams).
+            /// Use 2 (bigrams) para datasets com nomes curtos.
+            /// </summary>
+            public int N { get => _n; set { _n = value < 1 ? 1 : value; OnConfigChanged(); } }
+
+            /// <summary>
+            /// Score mínimo de interseção de n-gramas para um candidato ser incluído [0,1].
+            /// Score = ngramas_da_query_presentes_no_item / total_ngramas_da_query.
+            /// Padrão: 0.2 (20% dos n-gramas da query devem existir no texto candidato).
+            /// </summary>
+            public float MinScore { get => _minScore; set { _minScore = Math.Clamp(value, 0f, 1f); OnConfigChanged(); } }
+
+            /// <summary>
+            /// Adiciona sentinelas '^' e '$' ao redor do texto ao indexar,
+            /// melhorando o recall para buscas por prefixos e sufixos (padrão: true).
+            /// </summary>
+            public bool PadEdges { get => _padEdges; set { _padEdges = value; OnConfigChanged(); } }
+
+            public event Action? ConfigChanged;
+
+            public NgramSettings()
+            {
+                _enabled = true;
+                _n = 3;
+                _minScore = 0.2f;
+                _padEdges = true;
+            }
+
+            private void OnConfigChanged() => ConfigChanged?.Invoke();
+        }
+
+        // ── Fields & Properties ───────────────────────────────────────────────
+
         private ReRankSettings _config;
         public ReRankSettings Config
         {
@@ -103,12 +161,43 @@ namespace DMMRSuggestionEngine
             }
         }
 
+        private NgramSettings _ngramConfig;
+
+        /// <summary>
+        /// Configurações do N-Gram Indexing (v0.1.5).
+        /// Altere antes de chamar <see cref="LoadData"/> para que o índice
+        /// seja construído com os parâmetros corretos.
+        /// Alterações em <see cref="NgramSettings.MinScore"/> e
+        /// <see cref="NgramSettings.Enabled"/> invalidam apenas o cache.
+        /// Alterações em <see cref="NgramSettings.N"/> ou
+        /// <see cref="NgramSettings.PadEdges"/> exigem nova chamada a
+        /// <see cref="LoadData"/> para rebuildar o índice.
+        /// </summary>
+        public NgramSettings NgramConfig
+        {
+            get => _ngramConfig;
+            set
+            {
+                if (_ngramConfig != null)
+                    _ngramConfig.ConfigChanged -= InvalidateCache;
+                _ngramConfig = value;
+                _ngramConfig.ConfigChanged += InvalidateCache;
+                InvalidateCache();
+            }
+        }
+
+        // ── Constructor ───────────────────────────────────────────────────────
+
         public DMMRSuggestionEngine(bool useUnsafeBKTree = false)
         {
             _useUnsafeBKTree = useUnsafeBKTree;
             _config = new ReRankSettings();
             _config.ConfigChanged += InvalidateCache;
+            _ngramConfig = new NgramSettings();
+            _ngramConfig.ConfigChanged += InvalidateCache;
         }
+
+        // ── Normalization ─────────────────────────────────────────────────────
 
         private static string NormalizeString(string input)
         {
@@ -136,6 +225,8 @@ namespace DMMRSuggestionEngine
             }
             return sb.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
         }
+
+        // ── Cache ─────────────────────────────────────────────────────────────
 
         private void AddToCache(string key, List<T> value)
         {
@@ -204,6 +295,8 @@ namespace DMMRSuggestionEngine
             }
         }
 
+        // ── LoadData ──────────────────────────────────────────────────────────
+
         public void LoadData(IEnumerable<T> data, Func<T, string> textSelector, Func<T, float>? weightSelector = null)
         {
             var tempItems = new List<(T Entity, string RawText, float RawWeight)>();
@@ -231,6 +324,7 @@ namespace DMMRSuggestionEngine
                 });
             }
 
+            // ── BK-Tree ────────────────────────────────────────────────────
             _useBkTree = _items.Count > 500;
             if (_useBkTree)
             {
@@ -252,23 +346,34 @@ namespace DMMRSuggestionEngine
                 _bkTree = null;
             }
 
+            // ── N-Gram Index ───────────────────────────────────────────────
+            // Sempre constrói o índice (útil mesmo para datasets pequenos,
+            // pois cobre cenários que a BK-Tree não alcança).
+            var ngramItems = new List<(string Text, int Index)>(_items.Count);
+            for (int i = 0; i < _items.Count; i++)
+                ngramItems.Add((_items[i].NormalizedText, i));
+
+            _ngramIndex.Build(ngramItems, _ngramConfig.N, _ngramConfig.PadEdges);
+
             InvalidateCache();
             _dataVersion++;
         }
+
+        // ── Suggest ───────────────────────────────────────────────────────────
 
         public List<T> Suggest(string query, int maxAllowedErrors = 2, int maxResults = 5)
         {
             if (string.IsNullOrWhiteSpace(query))
                 return new List<T>();
 
-            string cacheKey = $"{query}|{maxAllowedErrors}|{maxResults}|{Config.Enabled}|{Config.FuzzyWeight}|{Config.WeightWeight}|{Config.FuzzyMode}|{Config.FuzzyExponentialFactor}|{Config.FuzzyInverseFactor}|{Config.PrioritizeExactMatch}|{Config.ExactMatchBonus}|{_dataVersion}|{_configVersion}";
+            string cacheKey = $"{query}|{maxAllowedErrors}|{maxResults}|{Config.Enabled}|{Config.FuzzyWeight}|{Config.WeightWeight}|{Config.FuzzyMode}|{Config.FuzzyExponentialFactor}|{Config.FuzzyInverseFactor}|{Config.PrioritizeExactMatch}|{Config.ExactMatchBonus}|{NgramConfig.Enabled}|{NgramConfig.MinScore}|{_dataVersion}|{_configVersion}";
 
             if (TryGetFromCache(cacheKey, out var cachedResult))
                 return cachedResult!;
 
             string normalizedQuery = NormalizeString(query);
 
-            // Coleta candidatos (com distância)
+            // ── 1. Candidatos BK-Tree / Levenshtein (typos) ───────────────
             List<(SuggestionItem Item, int Distance)> candidates;
             if (_useBkTree && _bkTree != null)
             {
@@ -289,9 +394,41 @@ namespace DMMRSuggestionEngine
                 }
             }
 
+            // ── 2. Candidatos N-Gram (parcial / reordenado / prefixo) ─────
+            if (_ngramConfig.Enabled)
+            {
+                var ngramHits = _ngramIndex.Search(normalizedQuery, _ngramConfig.MinScore);
+
+                if (ngramHits.Count > 0)
+                {
+                    // Monta um HashSet com os itens já presentes nos candidatos
+                    // para evitar duplicatas (compara por referência de objeto)
+                    var seen = new HashSet<SuggestionItem>(ReferenceEqualityComparer.Instance);
+                    foreach (var (item, _) in candidates)
+                        seen.Add(item);
+
+                    foreach (var (itemIdx, _) in ngramHits)
+                    {
+                        if (itemIdx < 0 || itemIdx >= _items.Count) continue;
+                        var candidate = _items[itemIdx];
+                        if (seen.Add(candidate))
+                        {
+                            // Para candidatos vindos apenas do N-Gram, a "distância"
+                            // usada no rerank é o comprimento do texto (penalidade suave),
+                            // pois não há distância de edição disponível sem calcular Levenshtein.
+                            // Isso garante que candidatos BK-Tree com distância real sempre
+                            // sejam preferidos quando o rerank estiver desabilitado.
+                            int pseudoDist = Math.Max(candidate.NormalizedText.Length, normalizedQuery.Length);
+                            candidates.Add((candidate, pseudoDist));
+                        }
+                    }
+                }
+            }
+
             if (candidates.Count == 0)
                 return new List<T>();
 
+            // ── 3. ReRank / Ordenação ─────────────────────────────────────
             List<T> result;
             if (Config.Enabled)
             {
@@ -371,7 +508,8 @@ namespace DMMRSuggestionEngine
             }
             else
             {
-                // Sem rerank: ordena por distância, depois peso
+                // Sem rerank: candidatos BK-Tree ordenados por distância + peso;
+                // candidatos N-Gram (pseudo-dist elevada) ficam ao final naturalmente.
                 candidates.Sort((a, b) =>
                 {
                     int cmp = a.Distance.CompareTo(b.Distance);
@@ -389,6 +527,8 @@ namespace DMMRSuggestionEngine
         }
 
         public void ClearCache() => InvalidateCache();
+
+        // ── Levenshtein ───────────────────────────────────────────────────────
 
         // Implementação da distância de Levenshtein com Span e sem alocações
         private static int LevenshteinDistance(string s, string t)

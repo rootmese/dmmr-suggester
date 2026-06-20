@@ -3,6 +3,11 @@ DMMR SUGGESTION ENGINE
 
 High-performance hybrid suggestion engine for .NET.
 
+VERSION
+-------
+
+0.1.5
+
 OVERVIEW
 --------
 
@@ -10,6 +15,7 @@ DMMR Suggestion Engine combines:
 
 - Fuzzy Search
 - BK-Tree Indexing
+- N-Gram Indexing (v0.1.5)
 - Similarity Metrics
 - Intelligent Ranking
 - Local Suggestions
@@ -22,15 +28,17 @@ MAIN FEATURES
 -------------
 
 * Levenshtein-based fuzzy matching
-* BK-Tree accelerated search
+* BK-Tree accelerated search (auto-enabled for datasets > 500 items)
+* N-Gram character indexing — partial phrases, reordered terms, incomplete prefixes
 * Cosine Similarity
 * Pearson Correlation
 * Jaccard Similarity
 * Euclidean Distance
 * Manhattan Distance
 * Weighted ranking
+* Configurable ReRank pipeline (Linear / Exponential / Inverse)
 * Hybrid OpenSearch integration
-* Built-in cache
+* Built-in LRU cache (auto-invalidation on data/config change)
 * Async support
 * CancellationToken support
 
@@ -41,15 +49,33 @@ var engine = new DMMRSuggestionEngine<(int Id, string Name, float Weight)>();
 
 engine.LoadData(new[]
 {
-    (1, "iPhone 16", 100f),
-    (2, "Samsung Galaxy", 80f),
-    (3, "Motorola Edge", 50f)
+    (1, "iPhone 16 Pro Max", 100f),
+    (2, "Samsung Galaxy S25 Ultra", 80f),
+    (3, "Motorola Edge 60", 50f)
 },
 x => x.Name,
 x => x.Weight
 );
 
-var results = engine.Suggest("iphon");
+// Typo tolerance (BK-Tree)
+var r1 = engine.Suggest("iphon");
+
+// Partial phrase (N-Gram)
+var r2 = engine.Suggest("Pro Max");
+
+// Reordered terms (N-Gram)
+var r3 = engine.Suggest("Galaxy Samsung");
+
+// Incomplete prefix (N-Gram)
+var r4 = engine.Suggest("Motorola E");
+
+N-GRAM CONFIGURATION
+--------------------
+
+engine.NgramConfig.Enabled  = true;   // enable/disable (default: true)
+engine.NgramConfig.N        = 3;      // n-gram size: 3=trigram, 2=bigram
+engine.NgramConfig.MinScore = 0.2f;   // minimum intersection score [0,1]
+engine.NgramConfig.PadEdges = true;   // ^ / $ sentinels for prefix/suffix recall
 
 ARCHITECTURE
 ------------
@@ -59,8 +85,16 @@ User Query
     v
 Normalization
     |
+    +------------------+
+    |                  |
+    v                  v
+BK-Tree Search    N-Gram Index Search
+(typo tolerance)  (partial / reorder)
+    |                  |
+    +------------------+
+    |
     v
-BK-Tree Search
+Merge & Deduplicate candidates
     |
     v
 Re-Ranking
@@ -77,7 +111,7 @@ PERFORMANCE
 Designed for:
 
 - Low memory usage
-- Reduced allocations
+- Reduced allocations (stackalloc Levenshtein, ArrayPool ReRank)
 - Fast fuzzy matching
 - Large datasets
 - High query throughput
@@ -89,6 +123,7 @@ Version 1.0 goals:
 
 - [x] Unit Tests
 - [x] BenchmarkDotNet
+- [x] N-Gram Indexing (v0.1.5)
 - [ ] XML Documentation
 - [ ] CI/CD Pipeline
 - [ ] NuGet Publishing

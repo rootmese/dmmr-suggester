@@ -100,6 +100,29 @@ Benefits:
 
 ---
 
+## N-Gram Indexing _(v0.1.5)_
+
+The engine now includes a **character-level N-Gram inverted index** that complements BK-Tree search.
+
+While BK-Tree excels at typo correction, N-Gram indexing handles scenarios that edit-distance cannot:
+
+- **Partial phrases**: `"Pro Max"` → finds `"iPhone 16 Pro Max"`
+- **Reordered terms**: `"Galaxy Samsung"` → finds `"Samsung Galaxy S25 Ultra"`
+- **Incomplete prefixes**: `"Motorola E"` → finds `"Motorola Edge 60"`
+
+Both indexes are queried in parallel and their candidates merged before re-ranking.
+
+Configuration:
+
+```csharp
+engine.NgramConfig.Enabled  = true;   // enable/disable (default: true)
+engine.NgramConfig.N        = 3;      // n-gram size: 3=trigram (default), 2=bigram
+engine.NgramConfig.MinScore = 0.2f;   // minimum intersection score [0,1]
+engine.NgramConfig.PadEdges = true;   // add ^ / $ sentinels for prefix/suffix recall
+```
+
+---
+
 ## Built-in Cache
 
 Includes result caching with automatic size control.
@@ -175,10 +198,21 @@ O retorno será uma lista ordenada por relevância das tuplas originais correspo
                  | Normalization  |
                  +--------+-------+
                           |
+              +-----------+-----------+
+              |                       |
+              v                       v
+    +------------------+   +--------------------+
+    | BK-Tree Search   |   | N-Gram Index Search|
+    | (typo tolerance) |   | (partial / reorder)|
+    +--------+---------+   +---------+----------+
+              |                       |
+              +-----------+-----------+
+                          |
                           v
-                 +----------------+
-                 | BK-Tree Search |
-                 +--------+-------+
+                 +------------------+
+                 | Merge & Dedupe   |
+                 | candidates       |
+                 +--------+---------+
                           |
                           v
                  +----------------+
@@ -240,22 +274,102 @@ Suitable for:
 
 ## Roadmap
 
-### Version 0.1.5 — Advanced Query Matching
+### ✅ Version 0.1.5 — Advanced Query Matching _(Released)_
 
 #### N-Gram Indexing
 
-One of the next major improvements planned for DMMR Suggestion Engine is support for **N-Gram indexing**.
+DMMR Suggestion Engine now supports **N-Gram character indexing** as a hybrid complement to BK-Tree.
 
-While BK-Tree indexing is highly effective for typo-tolerant searches, it is less effective when users search using partial phrases, reordered terms, or incomplete expressions.
+Previously, searches such as partial phrases, reordered terms, or incomplete expressions would return no results because the edit distance between the query and the full product name was too large.
 
 Example dataset:
 
 ```text
 iPhone 16 Pro Max
 Samsung Galaxy S25 Ultra
-Motorola Edge 60```
+Motorola Edge 60
+```
 
-Estimated deployment date: June 17, 2026
+Now the following queries all return relevant results:
+
+```text
+"Pro Max"         → iPhone 16 Pro Max
+"Galaxy Samsung"  → Samsung Galaxy S25 Ultra
+"Motorola E"      → Motorola Edge 60
+```
+
+The N-Gram index is built automatically during `LoadData` and queried in parallel with the BK-Tree. Results from both are merged and fed into the existing re-ranking pipeline.
+
+---
+
+## BM25 Ranking _(Planned)_
+
+Future versions of DMMR Suggestion Engine will support **BM25 (Best Matching 25)** ranking.
+
+BM25 is the de facto ranking algorithm used by modern search engines such as:
+
+- Elasticsearch
+- OpenSearch
+- Apache Lucene
+
+Unlike edit-distance algorithms, BM25 evaluates:
+
+- Term frequency
+- Document frequency
+- Query relevance
+- Document length normalization
+
+This allows more accurate ranking when multiple candidates match the same query.
+
+Example:
+
+Query:
+
+```text
+iphone pro
+```
+
+Results:
+
+```text
+iPhone 16 Pro Max
+iPhone 15 Pro
+iPhone Case Pro Edition
+```
+
+BM25 helps prioritize results based on textual relevance rather than only fuzzy distance.
+
+Planned usage:
+
+```csharp
+engine.RankingAlgorithm = RankingAlgorithm.BM25;
+```
+
+Or as part of a hybrid ranking strategy:
+
+```csharp
+engine.RankingAlgorithm = RankingAlgorithm.Hybrid;
+```
+
+Where the final score may combine:
+
+- Levenshtein Distance
+- N-Gram Similarity
+- BM25 Score
+- Item Weight
+
+Benefits:
+
+- Better relevance
+- Improved result ordering
+- Industry-standard ranking model
+- Better performance on large datasets
+
+Status:
+
+```text
+Planned for future releases
+```
 
 ---
 
