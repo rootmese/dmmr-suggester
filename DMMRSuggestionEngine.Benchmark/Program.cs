@@ -1,4 +1,4 @@
-﻿using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
 using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Engines;
@@ -56,6 +56,9 @@ public class SuggestionBenchmark
 
     [Benchmark]
     public void Search_NoMatch() => _engine.Suggest("xyzabc", maxAllowedErrors: 2);
+
+    [Benchmark]
+    public void Search_Partial() => _engine.Suggest("_125", maxAllowedErrors: 2);
 }
 
 public class Program

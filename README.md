@@ -387,11 +387,13 @@ Each operation is a fuzzy query with `maxAllowedErrors=2` (except ExactMatch)
 | **Exact / Typo / NoMatch**   | 10,000  | ~0.08 ms         | ~640 B              | Scales perfectly thanks to BK‑Tree & stackalloc  |
 | **WithReRank**               | 10,000  | 9.42 ms          | 66 KB               | Over 10x memory allocation reduction             |
 | **Exact / Typo / NoMatch**   | 100,000 | ~0.10 ms         | ~640 B              | Excellent constant-time behavior                 |
+| **Partial (N-Gram)**         | 100,000 | ~0.12 ms         | ~670 B              | Pure N-Gram search is virtually allocation-free  |
 | **WithReRank**               | 100,000 | 28.67 ms         | 66 KB               | 98.5% reduction in heap allocation (from 4.3MB)  |
 
 ## Interpretation
 
 - **Fuzzy search without rerank** keeps median latency **below 0.10 ms** for all dataset sizes, thanks to the BK‑Tree index, stackalloc Levenshtein distance, and LRU cache.  
+- **Partial search (N-Gram)** resolves missing substrings using the inverted index with minimal overhead (~670 Bytes allocation), running nearly as fast as the BK-Tree, even at 100,000 items.
 - **Rerank** (combining fuzzy similarity and item weight) uses an optimized **Top-K Selection** algorithm with **ArrayPool** and **struct-based comparers**. Instead of allocating large arrays of size $N$ and sorting them, the engine rents a tiny buffer of size `maxResults` and performs in-place bubble insertions. This keeps memory allocation constant at **66 KB** regardless of the dataset size (previously up to **4.33 MB**), drastically reducing GC overhead.
 - Outliers (first cold execution) are not representative of production performance; the engine stays warm in memory.
 
